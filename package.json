@@ -1,0 +1,17 @@
+{
+  "name": "dice-helper-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "helper_index.js", // Points to your main JS file
+  "scripts": {
+    "start": "node helper_index.js" // Command for `npm start`
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "node-telegram-bot-api": "^0.66.0"
+  },
+  "engines": {
+    "node": ">=18.x"
+  },
+  "private": true
+}
