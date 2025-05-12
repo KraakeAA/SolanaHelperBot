@@ -1,5 +1,6 @@
-// helper_index.js - Dice Helper Bot (Database Polling Strategy)
-// This bot polls the database for roll requests and updates them.
+// helper_index.js - Dice Helper Bot (Database Polling + Animated Dice Strategy)
+// This bot polls the database for roll requests, sends the animated dice,
+// and updates the database with the result from the animated dice roll.
 
 import 'dotenv/config';
 import TelegramBot from 'node-telegram-bot-api';
@@ -61,15 +62,12 @@ console.log("Helper Bot: Telegram Bot instance created and configured for pollin
 
 // --- Database Polling Function ---
 async function checkAndProcessRollRequests() {
-    // console.log('[DB_POLL] Checking for pending dice roll requests...'); // Uncomment for verbose logging
-    let client = null; // Use a single client for the transaction within this check cycle
+    // console.log('[DB_POLL] Checking for pending dice roll requests...');
+    let client = null;
     try {
         client = await pool.connect();
         await client.query('BEGIN'); // Start transaction
 
-        // Select pending requests AND lock them using FOR UPDATE SKIP LOCKED
-        // This prevents multiple instances of the helper (if you scale it) from processing the same request.
-        // It selects the oldest pending requests first.
         const selectQuery = `
             SELECT request_id, game_id, chat_id, user_id
             FROM dice_roll_requests
@@ -80,39 +78,55 @@ async function checkAndProcessRollRequests() {
         const result = await client.query(selectQuery, [MAX_REQUESTS_PER_CYCLE]);
 
         if (result.rows.length === 0) {
-            // console.log('[DB_POLL] No pending requests found.'); // Uncomment for verbose logging
-            await client.query('COMMIT'); // Commit even if no rows found to end transaction
+            await client.query('COMMIT');
             return; // Nothing to do
         }
 
         console.log(`[DB_POLL] Found ${result.rows.length} pending request(s) to process.`);
 
-        // Process each found request within the transaction
         for (const request of result.rows) {
             console.log(`[DB_PROCESS] Processing request_id: ${request.request_id} for game_id: ${request.game_id}`);
+            let rollValue = null;
+            let updateStatus = 'error'; // Default to error unless successful
 
-            // Generate a random dice roll (1-6)
-            const rollValue = Math.floor(Math.random() * 6) + 1;
-            console.log(`[DB_PROCESS] Generated roll: ${rollValue} for request_id: ${request.request_id}`);
+            try {
+                // 1. SEND THE ANIMATED DICE EMOJI
+                console.log(`[HELPER_SEND_DICE] Sending animated dice to chat_id: ${request.chat_id} for request ${request.request_id}`);
+                const sentDiceMessage = await bot.sendDice(request.chat_id); // This sends the 🎲 animation
 
-            // Update the specific request row identified by request_id
-            // Ensure status is still 'pending' in the WHERE clause for safety, although FOR UPDATE should prevent concurrent updates.
+                // 2. GET THE RESULT FROM TELEGRAM'S RESPONSE
+                if (sentDiceMessage && sentDiceMessage.dice) {
+                    rollValue = sentDiceMessage.dice.value; // Get the actual result (1-6) the dice landed on
+                    updateStatus = 'completed'; // Mark as completed if successful
+                    console.log(`[HELPER_SEND_DICE] Dice sent successfully for request ${request.request_id}. Result: ${rollValue}`);
+                } else {
+                    console.error(`[HELPER_SEND_DICE_ERROR] Failed to get dice result from sent message for request ${request.request_id}.`);
+                    // Keep status as 'error', rollValue remains null
+                }
+
+            } catch (sendError) {
+                console.error(`[HELPER_SEND_DICE_ERROR] Failed to send dice to chat_id ${request.chat_id} for request ${request.request_id}:`, sendError.message);
+                // Keep status as 'error', rollValue remains null
+                if (sendError.response && sendError.response.body) {
+                     console.error(`[HELPER_SEND_DICE_ERROR] API Error Details: ${JSON.stringify(sendError.response.body)}`);
+                }
+            }
+
+            // 3. UPDATE THE DATABASE with the result obtained from sendDice (or error status)
             const updateQuery = `
                 UPDATE dice_roll_requests
-                SET status = 'completed', roll_value = $1, processed_at = NOW()
-                WHERE request_id = $2 AND status = 'pending'`;
-            const updateResult = await client.query(updateQuery, [rollValue, request.request_id]);
+                SET status = $1, roll_value = $2, processed_at = NOW()
+                WHERE request_id = $3 AND status = 'pending'`;
+            const updateResult = await client.query(updateQuery, [updateStatus, rollValue, request.request_id]);
 
             if (updateResult.rowCount > 0) {
-                console.log(`[DB_PROCESS] Successfully updated request_id: ${request.request_id} to completed with roll ${rollValue}.`);
+                console.log(`[DB_PROCESS] Updated request_id: ${request.request_id} to status '${updateStatus}'${rollValue !== null ? ` with roll ${rollValue}` : ''}.`);
             } else {
-                // This case should be rare due to FOR UPDATE lock, but log if it happens
-                console.warn(`[DB_PROCESS_WARN] Failed to update request_id: ${request.request_id}. Status might have changed concurrently.`);
+                console.warn(`[DB_PROCESS_WARN] Failed to update request_id: ${request.request_id} after dice send attempt. Status might have changed concurrently.`);
             }
         }
 
         await client.query('COMMIT'); // Commit the transaction after processing all requests in this batch
-        // console.log('[DB_POLL] Transaction committed.'); // Uncomment for verbose logging
 
     } catch (error) {
         console.error('[DB_POLL_ERROR] Error during database check/processing cycle:', error);
@@ -127,7 +141,6 @@ async function checkAndProcessRollRequests() {
     } finally {
         if (client) {
             client.release(); // ALWAYS release the client back to the pool
-            // console.log('[DB_POLL] Database client released.'); // Uncomment for verbose logging
         }
     }
 }
@@ -137,9 +150,9 @@ async function checkAndProcessRollRequests() {
 // Standard help/start command for the helper bot
 bot.onText(/\/start|\/help/i, (msg) => {
     const chatId = msg.chat.id;
-    const helpText = "I am a Dice Helper Bot operating in Database Mode.\n" +
-                     "I automatically process dice roll requests generated by the main casino bot by checking a shared database.\n" +
-                     "You don't need to interact with me directly for the game functionality.";
+    const helpText = "I am a Dice Helper Bot (Animated Dice Mode).\n" +
+                     "I watch for requests from the main bot via a database, send an animated dice roll (🎲) to the chat, and report the result back to the database.\n" +
+                     "You don't need to interact with me directly.";
     bot.sendMessage(chatId, helpText);
 });
 
@@ -147,7 +160,6 @@ bot.onText(/\/start|\/help/i, (msg) => {
 bot.on('polling_error', (error) => {
     console.error(`\n🚫 HELPER BOT TELEGRAM POLLING ERROR 🚫 Code: ${error.code}`);
     console.error(`Helper Bot: Message - ${error.message}`);
-    // Consider specific error codes (e.g., 401 Unauthorized, 409 Conflict) if needed
 });
 
 // General error handler for the helper bot library
@@ -159,7 +171,7 @@ bot.on('error', (error) => {
 let pollingIntervalId = null; // To store the interval ID for graceful shutdown
 
 async function startHelperBot() {
-    console.log(`\n🚀🚀🚀 Initializing Dice Helper Bot (DB Polling Mode) 🚀🚀🚀`);
+    console.log(`\n🚀🚀🚀 Initializing Dice Helper Bot (Animated Dice Mode) 🚀🚀🚀`);
     console.log(`Timestamp: ${new Date().toISOString()}`);
 
     try {
