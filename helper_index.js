@@ -1,4 +1,4 @@
-// helper_index.js - Simple Dice Helper Bot (Modified for Emoji)
+// helper_index.js - Modifications for mentioning the main bot
 
 import 'dotenv/config';
 import TelegramBot from 'node-telegram-bot-api';
@@ -9,34 +9,43 @@ if (!HELPER_BOT_TOKEN) {
     process.exit(1);
 }
 const bot = new TelegramBot(HELPER_BOT_TOKEN, { polling: true });
-console.log("Dice Helper Bot initializing (Emoji Mode)...");
+console.log("Dice Helper Bot initializing (Emoji Mode with Mention)...");
 
-// Listen for ANY message. We will check if it's a dice emoji.
+// !!! DEFINE YOUR MAIN BOT'S USERNAME HERE (without @) !!!
+const MAIN_CASINO_BOT_USERNAME = "SolanaChatBot"; // Or load from an env variable if you prefer
+
 bot.on('message', (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
     const username = msg.from.username || msg.from.first_name || `User ${userId}`;
 
-    // Check if the message contains a dice object and if the emoji is the standard die 🎲
     if (msg.dice && msg.dice.emoji === '🎲') {
-        const rollValue = msg.dice.value; // Telegram provides the value here
+        const rollValue = msg.dice.value;
+        
+        // --- MODIFIED RESPONSE ---
+        // Format: @MainBotUsername <roll_value>
+        // Example: @SolanaChatBot 5
+        const responseText = `@${MAIN_CASINO_BOT_USERNAME} ${rollValue}`; 
+        // --- END MODIFIED RESPONSE ---
 
-        // The helper bot will send a message containing ONLY the roll value as text.
-        // This is what the main casino bot will parse.
-        bot.sendMessage(chatId, `${rollValue}`)
+        bot.sendMessage(chatId, responseText)
             .then(() => {
-                console.log(`Dice Helper Bot: User ${username} (${userId}) sent 🎲, got ${rollValue}. Helper responded with "${rollValue}" to chat ${chatId}`);
+                console.log(`Dice Helper Bot: User ${username} (${userId}) sent 🎲, got ${rollValue}. Helper responded with "${responseText}" to chat ${chatId}`);
             })
             .catch(err => {
                 console.error(`Dice Helper Bot: Error sending roll value message to chat ${chatId}:`, err.message);
             });
     }
-    // You can still keep the /roll command as a fallback or alternative if you like:
     else if (msg.text && msg.text.toLowerCase() === '/roll') {
         const rollValueFallback = Math.floor(Math.random() * 6) + 1;
-        bot.sendMessage(chatId, `${rollValueFallback}`)
+        
+        // --- MODIFIED RESPONSE ---
+        const responseTextFallback = `@${MAIN_CASINO_BOT_USERNAME} ${rollValueFallback}`;
+        // --- END MODIFIED RESPONSE ---
+
+        bot.sendMessage(chatId, responseTextFallback)
             .then(() => {
-                console.log(`Dice Helper Bot: User ${username} used /roll, got ${rollValueFallback}. Helper responded with "${rollValueFallback}" to chat ${chatId}`);
+                console.log(`Dice Helper Bot: User ${username} used /roll, got ${rollValueFallback}. Helper responded with "${responseTextFallback}" to chat ${chatId}`);
             })
             .catch(err => {
                 console.error(`Dice Helper Bot: Error sending /roll fallback message to chat ${chatId}:`, err.message);
@@ -46,15 +55,23 @@ bot.on('message', (msg) => {
 
 bot.onText(/\/start|\/help/i, (msg) => {
     const chatId = msg.chat.id;
-    const helpText = "I am a Dice Helper Bot. When prompted by another game bot, send the 🎲 emoji to roll. Alternatively, you can type `/roll`. I will provide a dice result (1-6).";
+    const helpText = "I am a Dice Helper Bot. When prompted by another game bot, send the 🎲 emoji to roll. Alternatively, you can type `/roll`. I will provide a dice result (1-6) by mentioning the main bot.";
     bot.sendMessage(chatId, helpText);
 });
 
-bot.on('polling_error', (error) => { /* ... as before ... */ });
-async function startHelperBot() { /* ... as before ... */
+bot.on('polling_error', (error) => {
+    console.error(`\n🚫 HELPER POLLING ERROR 🚫 Code: ${error.code}`);
+    console.error(`Message: ${error.message}`);
+    console.error(error);
+});
+
+async function startHelperBot() {
     try {
         const me = await bot.getMe();
-        console.log(`Dice Helper Bot (@${me.username}) with ID: ${me.id} is now running and listening for 🎲 emojis and /roll commands.`);
-    } catch (error) { /* ... */ }
+        console.log(`Dice Helper Bot (@${me.username}) with ID: ${me.id} is now running and listening for 🎲 emojis and /roll commands (mentioning @${MAIN_CASINO_BOT_USERNAME}).`);
+    } catch (error) {
+        console.error("❌ CRITICAL STARTUP ERROR (Helper Bot getMe):", error);
+        process.exit(1);
+    }
 }
 startHelperBot();
