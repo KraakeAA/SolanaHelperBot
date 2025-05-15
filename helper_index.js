@@ -59,13 +59,13 @@ async function checkAndProcessRollRequests() {
         client = await pool.connect();
         await client.query('BEGIN');
 
-        const selectQuery = `
-            SELECT request_id, game_id, chat_id, user_id, emoji_type 
-            FROM dice_roll_requests
-            WHERE status = 'pending'
-            ORDER BY requested_at ASC
-            LIMIT $1
-            FOR UPDATE SKIP LOCKED`;
+        // --- MODIFIED: Select emoji_type as well ---
+        const selectQuery = `SELECT request_id, game_id, chat_id, user_id, emoji_type 
+            FROM dice_roll_requests
+            WHERE status = 'pending'
+            ORDER BY requested_at ASC
+            LIMIT $1
+            FOR UPDATE SKIP LOCKED`;
         const result = await client.query(selectQuery, [MAX_REQUESTS_PER_CYCLE]);
 
         if (result.rows.length === 0) {
