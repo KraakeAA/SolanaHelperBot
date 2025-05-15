@@ -2,6 +2,7 @@
 // This bot polls the database for roll requests, sends the specified animated emoji,
 // and updates the database with the result from the animated emoji roll.
 // MODIFIED: Now saves error details to the 'notes' column on send failure.
+// MODIFIED: Corrected potential leading space in selectQuery.
 
 import 'dotenv/config';
 import TelegramBot from 'node-telegram-bot-api';
@@ -49,7 +50,7 @@ pool.on('error', (err, client) => {
 console.log("Helper Bot: ✅ PostgreSQL Pool created.");
 
 // --- Telegram Bot Initialization ---
-const bot = new TelegramBot(HELPER_BOT_TOKEN, { polling: true }); 
+const bot = new TelegramBot(HELPER_BOT_TOKEN, { polling: true }); 
 console.log("Helper Bot: Telegram Bot instance created.");
 
 // --- Database Polling Function ---
@@ -59,17 +60,12 @@ async function checkAndProcessRollRequests() {
         client = await pool.connect();
         await client.query('BEGIN');
 
-        // --- MODIFIED: Select emoji_type as well ---
-        const selectQuery = `SELECT request_id, game_id, chat_id, user_id, emoji_type 
-            FROM dice_roll_requests
-            WHERE status = 'pending'
-            ORDER BY requested_at ASC
-            LIMIT $1
-            FOR UPDATE SKIP LOCKED`;
+        // Ensure no leading spaces/chars in the query string literal
+        const selectQuery = `SELECT request_id, game_id, chat_id, user_id, emoji_type FROM dice_roll_requests WHERE status = 'pending' ORDER BY requested_at ASC LIMIT $1 FOR UPDATE SKIP LOCKED`;
         const result = await client.query(selectQuery, [MAX_REQUESTS_PER_CYCLE]);
 
         if (result.rows.length === 0) {
-            await client.query('COMMIT'); // Commit even if no rows, to release locks if any were held by FOR UPDATE
+            await client.query('COMMIT'); 
             client.release();
             return;
         }
@@ -79,10 +75,10 @@ async function checkAndProcessRollRequests() {
         for (const request of result.rows) {
             console.log(`[DB_PROCESS] Helper Bot: Processing request_id: ${request.request_id} for game_id: ${request.game_id}, emoji: ${request.emoji_type || '🎲 (default)'}`);
             let rollValue = null;
-            let updateStatus = 'error'; // Default to error
-            let errorNotes = null; // Variable to store error details
+            let updateStatus = 'error'; 
+            let errorNotes = null; 
 
-            const emojiToSend = request.emoji_type || '🎲'; 
+            const emojiToSend = request.emoji_type || '🎲'; 
 
             try {
                 console.log(`[HELPER_SEND_EMOJI] Sending animated emoji '${emojiToSend}' to chat_id: ${request.chat_id} for request ${request.request_id}`);
@@ -94,24 +90,20 @@ async function checkAndProcessRollRequests() {
                     console.log(`[HELPER_SEND_EMOJI] Emoji '${emojiToSend}' sent successfully for request ${request.request_id}. Result Value: ${rollValue}`);
                 } else {
                     console.error(`[HELPER_SEND_EMOJI_ERROR] Failed to get dice result for request ${request.request_id}.`);
-                    errorNotes = "Helper Bot: sendDice call succeeded but message.dice object was missing.";
+                    errorNotes = "Helper Bot: sendDice call succeeded but message.dice object was missing."; // Store error note
                 }
             } catch (sendError) {
                 console.error(`[HELPER_SEND_EMOJI_ERROR] Failed to send emoji '${emojiToSend}' to chat_id ${request.chat_id} for request ${request.request_id}:`, sendError.message);
-                let detailedError = sendError.message;
+                let detailedError = sendError.message;
                 if (sendError.response && sendError.response.body) {
                     console.error(`[HELPER_SEND_EMOJI_ERROR] API Error Details: ${JSON.stringify(sendError.response.body)}`);
-                    detailedError = `API Error ${sendError.response.body.error_code || ''}: ${sendError.response.body.description || sendError.message}`;
+                    detailedError = `API Error ${sendError.response.body.error_code || ''}: ${sendError.response.body.description || sendError.message}`;
                 }
-                errorNotes = detailedError.substring(0, 250); // Truncate if necessary for DB column
+                errorNotes = detailedError.substring(0, 250); // Store truncated error note
             }
 
-            // MODIFIED UPDATE QUERY to include notes
-            const updateQuery = `
-                UPDATE dice_roll_requests
-                SET status = $1, roll_value = $2, processed_at = NOW(), notes = $4
-                WHERE request_id = $3 AND status = 'pending'`; 
-            const updateResult = await client.query(updateQuery, [updateStatus, rollValue, request.request_id, errorNotes]);
+            const updateQuery = `UPDATE dice_roll_requests SET status = $1, roll_value = $2, processed_at = NOW(), notes = $4 WHERE request_id = $3 AND status = 'pending'`; 
+            const updateResult = await client.query(updateQuery, [updateStatus, rollValue, request.request_id, errorNotes]); // Pass errorNotes as $4
 
             if (updateResult.rowCount > 0) {
                 console.log(`[DB_PROCESS] Helper Bot: Updated request_id: ${request.request_id} to status '${updateStatus}'${rollValue !== null ? ` with value ${rollValue}` : ''}${errorNotes ? ` (Error: ${errorNotes})` : ''}.`);
@@ -203,7 +195,7 @@ process.on('SIGINT', async () => await shutdownHelper('SIGINT'));
 process.on('SIGTERM', async () => await shutdownHelper('SIGTERM'));
 process.on('uncaughtException', (error, origin) => {
     console.error(`\n🚨🚨 HELPER BOT UNCAUGHT EXCEPTION AT: ${origin} 🚨🚨`, error);
-    shutdownHelper('uncaughtException_exit').catch(() => process.exit(1)); 
+    shutdownHelper('uncaughtException_exit').catch(() => process.exit(1)); 
 });
 process.on('unhandledRejection', (reason, promise) => {
     console.error(`\n🔥🔥 HELPER BOT UNHANDLED REJECTION 🔥🔥`, reason);
